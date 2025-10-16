@@ -1112,7 +1112,8 @@ XXH_PUBLIC_API XXH64_hash_t XXH64_hashFromCanonical(const XXH64_canonical_t* src
 *  New generation hash designed for speed on small keys and vectorization
 ************************************************************************ */
 
-#include "xxh3.h"
+/* Disable XXH3 to avoid conflicts with system headers */
+/* #include "xxh3.h" */
 
 
 #endif  /* XXH_NO_LONG_LONG */

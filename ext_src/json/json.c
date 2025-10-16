@@ -29,6 +29,8 @@
 
 #include "json.h"
 
+#include <stdint.h>  /* for uintptr_t */
+
 #ifdef _MSC_VER
    #ifndef _CRT_SECURE_NO_WARNINGS
       #define _CRT_SECURE_NO_WARNINGS
@@ -142,7 +144,7 @@ static int new_value (json_state * state,
             values_size = sizeof (*value->u.object.values) * value->u.object.length;
 
             if (! (value->u.object.values = (json_object_entry *) json_alloc
-                  (state, values_size + ((unsigned long) value->u.object.values), 0)) )
+                  (state, values_size + ((size_t) (uintptr_t) value->u.object.values), 0)) )
             {
                return 0;
             }

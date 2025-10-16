@@ -1190,12 +1190,12 @@ static bool _selectable(const char *label, bool *v, const char *tooltip,
         ImVec2(GUI_ICON_HEIGHT, GUI_ICON_HEIGHT) :
         ImVec2(w, gui_get_item_height());
 
-    if (!tooltip && icon != -1) {
+    if (!tooltip && icon != -1 && label) {
         tooltip = label;
         while (*tooltip == '#') tooltip++;
     }
 
-    ImGui::PushID(label);
+    ImGui::PushID(label ?: "##icon");
     if (icon == -1) {
         ImGui::PushStyleColor(ImGuiCol_Button, COLOR(SELECTABLE, INNER, (*v)));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered,

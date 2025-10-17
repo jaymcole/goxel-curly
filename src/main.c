@@ -362,6 +362,11 @@ static bool open_dialog(
         path_normalize(buf);
         return true;
     }
+    if (err == NFD_ERROR) {
+        LOG_E("NFD Dialog error: %s", NFD_GetError());
+    } else if (err == NFD_CANCEL) {
+        LOG_D("NFD Dialog cancelled by user");
+    }
     return false;
 }
 

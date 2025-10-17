@@ -146,21 +146,52 @@ void image_update(image_t *img)
 
 image_t *image_new(void)
 {
-    layer_t *layer;
+    layer_t *layer, *lights_layer, *doors_layer;
+    material_t *light_mat, *door_mat;
     image_t *img = calloc(1, sizeof(*img));
     img->ref = 1;
     const int aabb[2][3] = {{-16, -16, 0}, {16, 16, 32}};
     bbox_from_aabb(img->box, aabb);
     img->export_width = 1024;
     img->export_height = 1024;
+
+    // Create default material
     image_add_material(img, NULL);
+
+    // Create Light material with custom opacity
+    light_mat = material_new("Light");
+    light_mat->base_color[3] = 0.4f;  // Set alpha/opacity to 0.4
+    image_add_material(img, light_mat);
+
+    // Create Door material with custom opacity
+    door_mat = material_new("Door");
+    door_mat->base_color[3] = 0.5f;  // Set alpha/opacity to 0.5
+    image_add_material(img, door_mat);
+
     image_add_camera(img, NULL);
+
+    // Create first default layer
     layer = image_add_layer(img, NULL);
     layer->visible = true;
     layer->id = img_get_new_id(img);
     layer->material = img->active_material;
     DL_APPEND(img->layers, layer);
     img->active_layer = layer;
+
+    // Create Lights layer
+    lights_layer = layer_new("Lights");
+    lights_layer->visible = true;
+    lights_layer->id = img_get_new_id(img);
+    lights_layer->material = light_mat;
+    DL_APPEND(img->layers, lights_layer);
+
+    // Create Doors layer
+    doors_layer = layer_new("Doors");
+    doors_layer->visible = true;
+    doors_layer->id = img_get_new_id(img);
+    doors_layer->material = door_mat;
+    DL_APPEND(img->layers, doors_layer);
+
     // Prevent saving an empty image.
     img->saved_key = image_get_key(img);
     image_history_push(img);

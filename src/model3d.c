@@ -18,6 +18,10 @@
 
 #include "goxel.h"
 
+// CUSTOM MODEL SUBSTITUTION: Include tinyobjloader for OBJ loading
+// Note: Implementation is in wavefront.c, we just need the declarations
+#include "../ext_src/tinyobjloader/tinyobj_loader_c.h"
+
 enum {
     A_POS_LOC = 0,
     A_COLOR_LOC = 1,
@@ -406,3 +410,177 @@ void model3d_render(model3d_t *model3d,
     GL(glCullFace(GL_BACK));
     GL(glEnable(GL_DEPTH_TEST));
 }
+
+// CUSTOM MODEL SUBSTITUTION START
+/*
+ * Helper function for tinyobj to read file data
+ */
+static void get_file_data_for_obj(void *ctx, const char *filename,
+                                    const int is_mtl,
+                                    const char *obj_filename,
+                                    char **data, size_t *len)
+{
+    int size;
+    (void)ctx;
+    (void)is_mtl;
+    (void)obj_filename;
+
+    if (!filename) {
+        *data = NULL;
+        *len = 0;
+        return;
+    }
+    *data = read_file(filename, &size);
+    *len = size;
+}
+
+/*
+ * Calculate face normal from three vertices using cross product
+ */
+static void calculate_normal(const float v0[3], const float v1[3],
+                             const float v2[3], float normal[3])
+{
+    float edge1[3], edge2[3];
+
+    // edge1 = v1 - v0
+    edge1[0] = v1[0] - v0[0];
+    edge1[1] = v1[1] - v0[1];
+    edge1[2] = v1[2] - v0[2];
+
+    // edge2 = v2 - v0
+    edge2[0] = v2[0] - v0[0];
+    edge2[1] = v2[1] - v0[1];
+    edge2[2] = v2[2] - v0[2];
+
+    // normal = cross(edge1, edge2)
+    normal[0] = edge1[1] * edge2[2] - edge1[2] * edge2[1];
+    normal[1] = edge1[2] * edge2[0] - edge1[0] * edge2[2];
+    normal[2] = edge1[0] * edge2[1] - edge1[1] * edge2[0];
+
+    // Normalize
+    float len = sqrt(normal[0] * normal[0] +
+                     normal[1] * normal[1] +
+                     normal[2] * normal[2]);
+    if (len > 0.0001f) {
+        normal[0] /= len;
+        normal[1] /= len;
+        normal[2] /= len;
+    }
+}
+
+/*
+ * Function: model3d_from_obj
+ * Load a 3D model from an OBJ file.
+ *
+ * Parameters:
+ *   path - Path to the .obj file
+ *
+ * Returns:
+ *   A newly created model3d_t, or NULL if loading failed.
+ *
+ * Note: This converts indexed triangle meshes to vertex arrays (no indexing).
+ *       Normals are calculated if not present in the file.
+ */
+model3d_t *model3d_from_obj(const char *path)
+{
+    int err;
+    tinyobj_attrib_t attrib = {0};
+    tinyobj_shape_t *shapes = NULL;
+    size_t num_shapes = 0;
+    tinyobj_material_t *materials = NULL;
+    size_t num_materials = 0;
+    unsigned int flags;
+    model3d_t *model = NULL;
+    int i, j, idx;
+    float v0[3], v1[3], v2[3], normal[3];
+    int vertex_index = 0;
+
+    // Parse OBJ file with triangulation
+    flags = TINYOBJ_FLAG_TRIANGULATE;
+    err = tinyobj_parse_obj(&attrib, &shapes, &num_shapes, &materials,
+                            &num_materials, path, get_file_data_for_obj,
+                            NULL, flags);
+
+    if (err != TINYOBJ_SUCCESS) {
+        LOG_E("Failed to load OBJ file: %s", path);
+        goto cleanup;
+    }
+
+    if (attrib.num_faces == 0) {
+        LOG_W("OBJ file has no faces: %s", path);
+        goto cleanup;
+    }
+
+    // Create model (3 vertices per triangle)
+    model = calloc(1, sizeof(*model));
+    model->nb_vertices = attrib.num_faces * 3;
+    model->vertices = calloc(model->nb_vertices, sizeof(*model->vertices));
+    model->solid = true;
+    model->cull = true;
+
+    // Convert indexed triangles to vertex array
+    for (i = 0; i < attrib.num_faces; i++) {
+        // Get the 3 vertices of this triangle
+        for (j = 0; j < 3; j++) {
+            idx = attrib.faces[i * 3 + j].v_idx;
+
+            // Position
+            model->vertices[vertex_index].pos[0] = attrib.vertices[idx * 3 + 0];
+            model->vertices[vertex_index].pos[1] = attrib.vertices[idx * 3 + 1];
+            model->vertices[vertex_index].pos[2] = attrib.vertices[idx * 3 + 2];
+
+            // Check if normals are provided
+            if (attrib.faces[i * 3 + j].vn_idx >= 0) {
+                int nidx = attrib.faces[i * 3 + j].vn_idx;
+                model->vertices[vertex_index].normal[0] = attrib.normals[nidx * 3 + 0];
+                model->vertices[vertex_index].normal[1] = attrib.normals[nidx * 3 + 1];
+                model->vertices[vertex_index].normal[2] = attrib.normals[nidx * 3 + 2];
+            }
+
+            // UV coordinates if available
+            if (attrib.faces[i * 3 + j].vt_idx >= 0) {
+                int tidx = attrib.faces[i * 3 + j].vt_idx;
+                model->vertices[vertex_index].uv[0] = attrib.texcoords[tidx * 2 + 0];
+                model->vertices[vertex_index].uv[1] = attrib.texcoords[tidx * 2 + 1];
+            } else {
+                model->vertices[vertex_index].uv[0] = 0.5f;
+                model->vertices[vertex_index].uv[1] = 0.5f;
+            }
+
+            // Default white color
+            model->vertices[vertex_index].color[0] = 255;
+            model->vertices[vertex_index].color[1] = 255;
+            model->vertices[vertex_index].color[2] = 255;
+            model->vertices[vertex_index].color[3] = 255;
+
+            vertex_index++;
+        }
+
+        // Calculate normals if not provided
+        if (attrib.num_normals == 0 || attrib.faces[i * 3].vn_idx < 0) {
+            // Get the three vertices of this triangle
+            memcpy(v0, model->vertices[(i * 3) + 0].pos, sizeof(v0));
+            memcpy(v1, model->vertices[(i * 3) + 1].pos, sizeof(v1));
+            memcpy(v2, model->vertices[(i * 3) + 2].pos, sizeof(v2));
+
+            calculate_normal(v0, v1, v2, normal);
+
+            // Set the same normal for all 3 vertices
+            memcpy(model->vertices[(i * 3) + 0].normal, normal, sizeof(normal));
+            memcpy(model->vertices[(i * 3) + 1].normal, normal, sizeof(normal));
+            memcpy(model->vertices[(i * 3) + 2].normal, normal, sizeof(normal));
+        }
+    }
+
+    model->dirty = true;
+    LOG_I("Loaded OBJ model: %s (%d triangles)", path, attrib.num_faces);
+
+cleanup:
+    // Free tinyobj data
+    tinyobj_attrib_free(&attrib);
+    tinyobj_shapes_free(shapes, num_shapes);
+    tinyobj_materials_free(materials, num_materials);
+
+    return model;
+}
+// CUSTOM MODEL SUBSTITUTION END

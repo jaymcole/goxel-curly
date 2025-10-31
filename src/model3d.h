@@ -107,6 +107,23 @@ model3d_t *model3d_wire_rect(void);
 
 model3d_t *model3d_cone(void);
 
+// CUSTOM MODEL SUBSTITUTION START
+/*
+ * Function: model3d_from_obj
+ * Load a 3D model from an OBJ file.
+ *
+ * Parameters:
+ *   path - Path to the .obj file
+ *
+ * Returns:
+ *   A newly created model3d_t, or NULL if loading failed.
+ *
+ * Note: This function loads OBJ files with triangle meshes.
+ *       Normals are calculated automatically if not present in the file.
+ */
+model3d_t *model3d_from_obj(const char *path);
+// CUSTOM MODEL SUBSTITUTION END
+
 /*
  * Function: model3d_render
  * Render a 3d model using OpenGL calls.

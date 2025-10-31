@@ -46,24 +46,42 @@ void model_manager_init(void)
 
 void model_manager_load(void)
 {
+    model3d_t *model;
+
     if (!g_model_manager.initialized) {
         LOG_E("Model manager not initialized");
         return;
     }
 
-    // TODO: In a full implementation, this would load actual OBJ files
-    // from data/models/ directory. For now, we'll create placeholder entries
-    // that can be populated later.
+    // Load models from data/models/ directory
+    // Each model is assigned a specific model_id (1-255)
+    // model_id 0 is reserved for normal cube rendering
 
-    // Example placeholder loading:
-    // model3d_t *lightbulb = model3d_load("data/models/lightbulb.obj");
-    // if (lightbulb) {
-    //     model_manager_register(1, lightbulb);
-    // }
-    //
-    // model3d_t *door = model3d_load("data/models/door.obj");
-    // if (door) {
-    //     model_manager_register(2, door);
+    // Model ID 1: Lightbulb
+    model = model3d_from_obj("data/models/lightbulb.obj");
+    if (model) {
+        model_manager_register(1, model);
+        LOG_D("Registered lightbulb.obj as model_id 1");
+    }
+
+    // Model ID 2: Door
+    model = model3d_from_obj("data/models/door.obj");
+    if (model) {
+        model_manager_register(2, model);
+        LOG_D("Registered door.obj as model_id 2");
+    }
+
+    // Model ID 3: Torch
+    model = model3d_from_obj("data/models/torch.obj");
+    if (model) {
+        model_manager_register(3, model);
+        LOG_D("Registered torch.obj as model_id 3");
+    }
+
+    // Add more models here as needed...
+    // model = model3d_from_obj("data/models/yourmodel.obj");
+    // if (model) {
+    //     model_manager_register(4, model);
     // }
 
     LOG_I("Model manager loaded %d custom models", g_model_manager.count);

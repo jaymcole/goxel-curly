@@ -20,13 +20,22 @@
 #include "script.h"
 #include <getopt.h>
 
-#include "../ext_src/nfd/nfd.h"
-#include "../ext_src/nfd/nfd_glfw3.h"
-
 #ifdef GLES2
 #   define GLFW_INCLUDE_ES2
 #endif
 #include <GLFW/glfw3.h>
+
+// Define native window access before including NFD glfw headers
+#if defined(_WIN32)
+#   define GLFW_EXPOSE_NATIVE_WIN32
+#elif defined(__APPLE__)
+#   define GLFW_EXPOSE_NATIVE_COCOA
+#elif defined(__linux__)
+#   define GLFW_EXPOSE_NATIVE_X11
+#endif
+
+#include "../ext_src/nfd/nfd.h"
+#include "../ext_src/nfd/nfd_glfw3.h"
 
 static inputs_t     *g_inputs = NULL;
 static float        g_scale = 1;
@@ -317,8 +326,9 @@ static bool open_dialog(
     char nfd_filters_spec[128];
     char *out_path = NULL;
     nfdu8filteritem_t filter;
-    nfdwindowhandle_t nfd_window;
+    nfdwindowhandle_t nfd_window = {0};
     nfdresult_t err;
+    bool window_success;
     GLFWwindow *window = user;
 
     LOG_D("Open Dialog (mode=%s, default_path_and_file=%s)",
@@ -328,14 +338,23 @@ static bool open_dialog(
     filter.name = filters_desc;
     filter.spec = nfd_filters_spec;
 
-    NFD_Init();
-    NFD_GetNativeWindowFromGLFWWindow(window, &nfd_window);
+    window_success = NFD_GetNativeWindowFromGLFWWindow(window, &nfd_window);
+    if (!window_success) {
+        LOG_E("Failed to get native window handle from GLFW window");
+        return false;
+    }
+    LOG_D("Native window handle - type: %zu, handle: %p",
+          nfd_window.type, nfd_window.handle);
 
     if (flags & 1) { // Save dialog.
         path_dirname(default_path_and_file, default_path,
                      sizeof(default_path));
         path_basename(default_path_and_file, default_name,
                       sizeof(default_name));
+        LOG_D("Save dialog params - filter: %s (%s), path: '%s', name: '%s'",
+              filter.name, filter.spec,
+              default_path[0] ? default_path : "(null)",
+              default_name[0] ? default_name : "(null)");
         err = NFD_SaveDialogU8_With(
                 &out_path,
                 &(nfdsavedialogu8args_t){
@@ -345,7 +364,10 @@ static bool open_dialog(
                     .defaultName = default_name[0] ? default_name : NULL,
                     .parentWindow = nfd_window,
                 });
+        LOG_D("Save dialog returned: %d", err);
     } else {
+        LOG_D("Open dialog params - filter: %s (%s), path: '%s'",
+              filter.name, filter.spec, default_path_and_file);
         err = NFD_OpenDialogU8_With(
                 &out_path,
                 &(nfdopendialogu8args_t){
@@ -354,8 +376,8 @@ static bool open_dialog(
                     .defaultPath = default_path_and_file,
                     .parentWindow = nfd_window,
                 });
+        LOG_D("Open dialog returned: %d", err);
     }
-    NFD_Quit();
     if (err == NFD_OKAY) {
         snprintf(buf, buf_size, "%s", out_path);
         free(out_path);
@@ -428,6 +450,9 @@ int main(int argc, char **argv)
 #endif
     goxel_init();
 
+    // Initialize NFD once at startup to avoid COM conflicts
+    NFD_Init();
+
     // Run the unit tests in debug.
     if (DEBUG) {
         tests_run();
@@ -452,6 +477,7 @@ int main(int argc, char **argv)
     }
     start_main_loop(loop_function, window);
 end:
+    NFD_Quit();
     glfwTerminate();
     goxel_release();
     return ret;

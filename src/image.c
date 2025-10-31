@@ -146,8 +146,8 @@ void image_update(image_t *img)
 
 image_t *image_new(void)
 {
-    layer_t *layer, *lights_layer, *doors_layer;
-    material_t *light_mat, *door_mat;
+    layer_t *layer, *lights_layer, *doors_layer, *spawns_layer, *floods_layer;
+    material_t *light_mat, *door_mat, *spawn_mat, *flood_mat;
     image_t *img = calloc(1, sizeof(*img));
     img->ref = 1;
     const int aabb[2][3] = {{-16, -16, 0}, {16, 16, 32}};
@@ -167,6 +167,16 @@ image_t *image_new(void)
     door_mat = material_new("Door");
     door_mat->base_color[3] = 0.5f;  // Set alpha/opacity to 0.5
     image_add_material(img, door_mat);
+
+    // Create Door material with custom opacity
+    spawn_mat = material_new("Spawn");
+    spawn_mat->base_color[3] = 0.6f;  // Set alpha/opacity to 0.6
+    image_add_material(img, spawn_mat);
+
+    // Create Door material with custom opacity
+    flood_mat = material_new("Flood");
+    flood_mat->base_color[3] = 0.8f;  // Set alpha/opacity to 0.6
+    image_add_material(img, flood_mat);
 
     image_add_camera(img, NULL);
 
@@ -191,6 +201,20 @@ image_t *image_new(void)
     doors_layer->id = img_get_new_id(img);
     doors_layer->material = door_mat;
     DL_APPEND(img->layers, doors_layer);
+
+    // Create Doors layer
+    spawns_layer = layer_new("Spawns");
+    spawns_layer->visible = true;
+    spawns_layer->id = img_get_new_id(img);
+    spawns_layer->material = spawn_mat;
+    DL_APPEND(img->layers, spawns_layer);
+
+    // Create Doors layer
+    floods_layer = layer_new("Floods");
+    floods_layer->visible = true;
+    floods_layer->id = img_get_new_id(img);
+    floods_layer->material = flood_mat;
+    DL_APPEND(img->layers, floods_layer);
 
     // Prevent saving an empty image.
     img->saved_key = image_get_key(img);

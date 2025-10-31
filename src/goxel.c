@@ -19,6 +19,7 @@
 #include "goxel.h"
 
 #include "file_format.h"
+#include "model_manager.h" // CUSTOM MODEL SUBSTITUTION
 #include "script.h"
 #include "shader_cache.h"
 #include "xxhash.h"
@@ -582,6 +583,13 @@ void goxel_release(void)
 void goxel_create_graphics(void)
 {
     render_init();
+    // CUSTOM MODEL SUBSTITUTION START
+    // Initialize and load custom models after rendering is initialized
+    model_manager_init();
+    model_manager_load();
+    LOG_I("Custom model substitution initialized (%d models loaded)",
+          model_manager_get_count());
+    // CUSTOM MODEL SUBSTITUTION END
     goxel.graphics_initialized = true;
 }
 
@@ -591,6 +599,10 @@ void goxel_create_graphics(void)
  */
 void goxel_release_graphics(void)
 {
+    // CUSTOM MODEL SUBSTITUTION START
+    // Free custom models before other graphics resources
+    model_manager_free();
+    // CUSTOM MODEL SUBSTITUTION END
     render_deinit();
     model3d_release_graphics();
     gui_release_graphics();

@@ -47,6 +47,11 @@ struct tile_data
     int         ref;
     uint64_t    id;
     uint8_t     voxels[TILE_SIZE * TILE_SIZE * TILE_SIZE][4]; // RGBA voxels.
+    // CUSTOM MODEL SUBSTITUTION START
+    // model_ids: sparse array for voxels with custom models (NULL if all are 0)
+    // Allocated on-demand when a voxel needs a non-zero model_id
+    uint8_t     *model_ids; // [TILE_SIZE * TILE_SIZE * TILE_SIZE], 0 = normal cube
+    // CUSTOM MODEL SUBSTITUTION END
 };
 
 struct tile
@@ -168,6 +173,13 @@ static void tile_delete(tile_t *tile)
 {
     tile->data->ref--;
     if (tile->data->ref == 0) {
+        // CUSTOM MODEL SUBSTITUTION START
+        // Free model_ids if allocated
+        if (tile->data->model_ids) {
+            free(tile->data->model_ids);
+            tile->data->model_ids = NULL;
+        }
+        // CUSTOM MODEL SUBSTITUTION END
         free(tile->data);
         g_global_stats.nb_tiles--;
         g_global_stats.mem -= sizeof(*tile->data);
@@ -208,6 +220,13 @@ static void tile_prepare_write(tile_t *tile)
     tile_data_t *data;
     data = calloc(1, sizeof(*tile->data));
     memcpy(data->voxels, tile->data->voxels, N * N * N * 4);
+    // CUSTOM MODEL SUBSTITUTION START
+    // Copy model_ids if they exist
+    if (tile->data->model_ids) {
+        data->model_ids = malloc(N * N * N);
+        memcpy(data->model_ids, tile->data->model_ids, N * N * N);
+    }
+    // CUSTOM MODEL SUBSTITUTION END
     data->ref = 1;
     tile->data = data;
     tile->data->id = ++g_uid;
@@ -828,3 +847,118 @@ void volume_get_global_stats(volume_global_stats_t *stats)
 {
     *stats = g_global_stats;
 }
+
+// CUSTOM MODEL SUBSTITUTION START
+/*
+ * Function: volume_get_model_id_at
+ * Get the model_id of a voxel at a given position.
+ *
+ * Parameters:
+ *   volume - The volume.
+ *   it     - Optional volume iterator for optimized access.
+ *   pos    - Position of the voxel.
+ *
+ * Returns:
+ *   The model_id (0 = normal cube, 1+ = custom model), or 0 if voxel doesn't exist.
+ */
+uint8_t volume_get_model_id_at(const volume_t *volume, volume_iterator_t *it,
+                                const int pos[3])
+{
+    tile_t *tile;
+    int tile_pos[3];
+    int x, y, z, idx;
+
+    if (!volume) return 0;
+
+    // Compute tile position
+    tile_pos[0] = (pos[0] >> 4) << 4;
+    tile_pos[1] = (pos[1] >> 4) << 4;
+    tile_pos[2] = (pos[2] >> 4) << 4;
+
+    // Try to use cached tile from iterator
+    if (it && it->tile && vec3_equal(it->tile_pos, tile_pos)) {
+        tile = it->tile;
+    } else {
+        HASH_FIND(hh, volume->tiles, tile_pos, 3 * sizeof(int), tile);
+        if (it) {
+            it->tile = tile;
+            vec3_copy(tile_pos, it->tile_pos);
+            it->tile_id = tile ? tile->id : 0;
+        }
+    }
+
+    if (!tile || !tile->data->model_ids) return 0;
+
+    // Get local position within tile
+    x = pos[0] - tile->pos[0];
+    y = pos[1] - tile->pos[1];
+    z = pos[2] - tile->pos[2];
+
+    if (x < 0 || x >= N || y < 0 || y >= N || z < 0 || z >= N) return 0;
+
+    idx = x + y * N + z * N * N;
+    return tile->data->model_ids[idx];
+}
+
+/*
+ * Function: volume_set_model_id_at
+ * Set the model_id of a voxel at a given position.
+ *
+ * Parameters:
+ *   volume   - The volume.
+ *   it       - Optional volume iterator for optimized access.
+ *   pos      - Position of the voxel.
+ *   model_id - The model_id to set (0 = normal cube, 1+ = custom model).
+ */
+void volume_set_model_id_at(volume_t *volume, volume_iterator_t *it,
+                             const int pos[3], uint8_t model_id)
+{
+    tile_t *tile;
+    int tile_pos[3];
+    int x, y, z, idx;
+
+    if (!volume) return;
+
+    // Compute tile position
+    tile_pos[0] = (pos[0] >> 4) << 4;
+    tile_pos[1] = (pos[1] >> 4) << 4;
+    tile_pos[2] = (pos[2] >> 4) << 4;
+
+    // Find or create tile
+    HASH_FIND(hh, volume->tiles, tile_pos, 3 * sizeof(int), tile);
+    if (!tile) {
+        tile = tile_new(tile_pos);
+        HASH_ADD(hh, volume->tiles, pos, sizeof(tile->pos), tile);
+    }
+
+    // Prepare for write (copy-on-write)
+    tile_prepare_write(tile);
+
+    // Allocate model_ids array if needed
+    if (!tile->data->model_ids && model_id != 0) {
+        tile->data->model_ids = calloc(N * N * N, 1);
+    }
+
+    if (!tile->data->model_ids) return; // Still NULL means model_id was 0
+
+    // Get local position within tile
+    x = pos[0] - tile->pos[0];
+    y = pos[1] - tile->pos[1];
+    z = pos[2] - tile->pos[2];
+
+    if (x < 0 || x >= N || y < 0 || y >= N || z < 0 || z >= N) return;
+
+    idx = x + y * N + z * N * N;
+    tile->data->model_ids[idx] = model_id;
+
+    // Update iterator cache if provided
+    if (it) {
+        it->tile = tile;
+        vec3_copy(tile_pos, it->tile_pos);
+        it->tile_id = tile->id;
+    }
+
+    // Update volume key
+    volume->key = g_uid++;
+}
+// CUSTOM MODEL SUBSTITUTION END

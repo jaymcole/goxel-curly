@@ -100,6 +100,12 @@ add_compile_options(-include ${CMAKE_SOURCE_DIR}/src/config.h)
 # Collect all source files (only from src/, not ext_src/)
 file(GLOB_RECURSE GOXEL_C_SOURCES src/*.c)
 file(GLOB_RECURSE GOXEL_CXX_SOURCES src/*.cpp)
+
+# CUSTOM MODEL SUBSTITUTION: Explicitly add model_manager.c
+list(APPEND GOXEL_C_SOURCES
+    ${CMAKE_SOURCE_DIR}/src/model_manager.c
+)
+
 set(GOXEL_SOURCES ${GOXEL_C_SOURCES} ${GOXEL_CXX_SOURCES})
 
 # External library sources (C)

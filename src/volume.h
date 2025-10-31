@@ -238,4 +238,34 @@ typedef struct {
 
 void volume_get_global_stats(volume_global_stats_t *stats);
 
+// CUSTOM MODEL SUBSTITUTION START
+/*
+ * Function: volume_get_model_id_at
+ * Get the model_id of a voxel at a given position.
+ *
+ * Parameters:
+ *   volume - The volume.
+ *   it     - Optional volume iterator for optimized access.
+ *   pos    - Position of the voxel.
+ *
+ * Returns:
+ *   The model_id (0 = normal cube, 1+ = custom model), or 0 if voxel doesn't exist.
+ */
+uint8_t volume_get_model_id_at(const volume_t *volume, volume_iterator_t *it,
+                                const int pos[3]);
+
+/*
+ * Function: volume_set_model_id_at
+ * Set the model_id of a voxel at a given position.
+ *
+ * Parameters:
+ *   volume   - The volume.
+ *   it       - Optional volume iterator for optimized access.
+ *   pos      - Position of the voxel.
+ *   model_id - The model_id to set (0 = normal cube, 1+ = custom model).
+ */
+void volume_set_model_id_at(volume_t *volume, volume_iterator_t *it,
+                             const int pos[3], uint8_t model_id);
+// CUSTOM MODEL SUBSTITUTION END
+
 #endif // VOLUME_H

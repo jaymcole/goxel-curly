@@ -20,6 +20,7 @@
 #include "goxel.h"
 
 #include "shader_cache.h"
+#include "model_manager.h" // CUSTOM MODEL SUBSTITUTION
 
 #ifndef RENDER_CACHE_SIZE
 #   define RENDER_CACHE_SIZE (1 * GB)
@@ -571,6 +572,61 @@ static void compute_shadow_map_box(
     }
 }
 
+// CUSTOM MODEL SUBSTITUTION START
+/*
+ * Render custom 3D models for voxels that have model_id > 0.
+ * This function iterates through all voxels in the volume and renders
+ * a custom model (from model_manager) at each voxel position where
+ * the model_id is non-zero.
+ */
+static void render_custom_models(renderer_t *rend, volume_t *volume,
+                                   const material_t *material)
+{
+    volume_iterator_t iter;
+    int pos[3];
+    uint8_t voxel[4];
+    uint8_t model_id;
+    model3d_t *model;
+    float model_mat[4][4];
+    float light[3];
+    const float CUSTOM_MODEL_SCALE = 0.95f; // Scale models to fit within voxel cell
+
+    (void)material; // Parameter reserved for future use
+
+    // Iterate through all voxels
+    iter = volume_get_accessor(volume);
+    volume_iterator_t iter2 = volume_get_iterator(volume, VOLUME_ITER_SKIP_EMPTY);
+
+    while (volume_iter(&iter2, pos)) {
+        // Check if voxel exists and get its model_id
+        volume_get_at(volume, &iter, pos, voxel);
+        if (voxel[3] < 127) continue; // Skip non-visible voxels
+
+        model_id = volume_get_model_id_at(volume, &iter, pos);
+        if (model_id == 0) continue; // Skip normal cubes
+
+        // Get custom model from model manager
+        model = model_manager_get(model_id);
+        if (!model) continue; // Model not found, skip
+
+        // Build model matrix: translate to voxel center and scale to fit
+        mat4_set_identity(model_mat);
+        // Translate to voxel position (center of the voxel cube)
+        mat4_itranslate(model_mat, pos[0] + 0.5f, pos[1] + 0.5f, pos[2] + 0.5f);
+        // Scale model to fit within voxel cell
+        mat4_iscale(model_mat, CUSTOM_MODEL_SCALE, CUSTOM_MODEL_SCALE,
+                    CUSTOM_MODEL_SCALE);
+
+        // Get light direction
+        get_light_dir(rend, light);
+
+        // Render the custom model at this voxel position
+        model3d_render(model, model_mat, rend->view_mat, rend->proj_mat,
+                       voxel, NULL, light, NULL, 0);
+    }
+}
+// CUSTOM MODEL SUBSTITUTION END
+
 static void render_volume_(renderer_t *rend, volume_t *volume,
                          const material_t *material, int effects,
                          const float shadow_mvp[4][4])
@@ -682,6 +738,14 @@ static void render_volume_(renderer_t *rend, volume_t *volume,
     }
     for (attr = 0; attr < ARRAY_SIZE(ATTRIBUTES); attr++)
         GL(glDisableVertexAttribArray(attr));
+
+    // CUSTOM MODEL SUBSTITUTION START
+    // After rendering all normal cubes, render custom models for voxels with model_id > 0
+    if (!(effects & (EFFECT_RENDER_POS | EFFECT_SHADOW_MAP | EFFECT_GRID_ONLY |
+                     EFFECT_EDGES | EFFECT_SEE_BACK))) {
+        render_custom_models(rend, volume, material);
+    }
+    // CUSTOM MODEL SUBSTITUTION END
 
     if (effects & EFFECT_SEE_BACK) {
         effects &= ~EFFECT_SEE_BACK;

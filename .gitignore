@@ -1,7 +1,6 @@
 *.o
 *.swp
 *~
-*.obj
 .sconsign.dblite
 /.sconf_temp
 /goxel

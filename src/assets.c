@@ -56,6 +56,7 @@ static asset_t ASSETS[] = {
 #include "assets/icons.inl"
 #include "assets/images.inl"
 #include "assets/locale.inl"
+#include "assets/models.inl"
 #include "assets/other.inl"
 #include "assets/palettes.inl"
 #include "assets/progs.inl"

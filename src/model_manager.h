@@ -83,6 +83,19 @@ bool model_manager_register(uint8_t model_id, model3d_t *model);
 int model_manager_get_count(void);
 
 /*
+ * Function: model_manager_get_name
+ * Get the display name of a custom model by its model_id.
+ *
+ * Parameters:
+ *   model_id - The ID of the model (0-255)
+ *
+ * Returns:
+ *   The name string, or NULL if model_id is not registered.
+ *   model_id 0 returns "Cube" (the default).
+ */
+const char *model_manager_get_name(uint8_t model_id);
+
+/*
  * Function: model_manager_free
  * Free all resources used by the model manager.
  *

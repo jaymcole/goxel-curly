@@ -531,6 +531,7 @@ void goxel_reset(void)
         .mode = MODE_OVER,
         .smoothness = 0,
         .color = {255, 255, 255, 255},
+        .model_id = 0,  // CUSTOM MODEL SUBSTITUTION: Default to normal cubes
     };
 
     // Set symmetry origin to the center of the image.

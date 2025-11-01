@@ -100,6 +100,7 @@ typedef struct painter {
     int            mode;
     const shape_t *shape;
     uint8_t        color[4];
+    uint8_t        model_id;      // CUSTOM MODEL SUBSTITUTION: 0=cube, 1+=custom model
     float          smoothness;
     int            symmetry; // bitfield X Y Z
     float          symmetry_origin[3];

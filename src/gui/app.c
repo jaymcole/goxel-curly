@@ -45,6 +45,7 @@ void gui_menu(void);
 void gui_tools_panel(void);
 void gui_top_bar(void);
 void gui_palette_panel(void);
+void gui_model_panel(void);  // CUSTOM MODEL SUBSTITUTION
 void gui_layers_panel(void);
 void gui_view_panel(void);
 void gui_material_panel(void);
@@ -62,6 +63,7 @@ enum {
     PANEL_NULL,
     PANEL_TOOLS,
     PANEL_PALETTE,
+    PANEL_MODEL,     // CUSTOM MODEL SUBSTITUTION
     PANEL_EDIT,
     PANEL_LAYERS,
     PANEL_SNAP,
@@ -84,6 +86,7 @@ static struct {
 } PANELS[] = {
     [PANEL_TOOLS]       = {N_("Tools"), ICON_TOOLS, gui_tools_panel},
     [PANEL_PALETTE]     = {N_("Palette"), ICON_PALETTE, gui_palette_panel},
+    [PANEL_MODEL]       = {N_("Models"), ICON_SHAPE, gui_model_panel},  // CUSTOM MODEL SUBSTITUTION
     [PANEL_EDIT]        = {N_("Edit"), ICON_HAMMER, gui_edit_panel},
     [PANEL_LAYERS]      = {N_("Layers"), ICON_LAYERS, gui_layers_panel},
     [PANEL_SNAP]        = {N_("Snap"), ICON_SNAP, gui_snap_panel},

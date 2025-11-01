@@ -382,6 +382,23 @@ void volume_op(volume_t *volume, const painter_t *painter, const float box[4][4]
             volume_set_at(volume, &accessor, vp, new_value);
     }
 
+    // CUSTOM MODEL SUBSTITUTION: Set model_id on placed voxels
+    if (painter->model_id > 0) {
+        volume_iterator_t iter2;
+        volume_accessor_t accessor2;
+        uint8_t voxel[4];
+
+        accessor2 = volume_get_accessor(volume);
+        iter2 = volume_get_box_iterator(volume, box, VOLUME_ITER_SKIP_EMPTY);
+
+        while (volume_iter(&iter2, vp)) {
+            volume_get_at(volume, &accessor2, vp, voxel);
+            if (voxel[3] >= 127) {
+                volume_set_model_id_at(volume, &accessor2, vp, painter->model_id);
+            }
+        }
+    }
+
     cache_add(cache, &key, sizeof(key), volume_copy(volume), 1, volume_del);
 }
 

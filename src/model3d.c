@@ -20,6 +20,8 @@
 
 // CUSTOM MODEL SUBSTITUTION: Include tinyobjloader for OBJ loading
 // Note: Implementation is in wavefront.c, we just need the declarations
+// Increase max faces per line to support complex models
+#define TINYOBJ_MAX_FACES_PER_F_LINE 256
 #include "../ext_src/tinyobjloader/tinyobj_loader_c.h"
 
 enum {
@@ -426,12 +428,39 @@ static void get_file_data_for_obj(void *ctx, const char *filename,
     (void)obj_filename;
 
     if (!filename) {
+        LOG_W("get_file_data_for_obj: filename is NULL");
         *data = NULL;
         *len = 0;
         return;
     }
-    *data = read_file(filename, &size);
-    *len = size;
+
+    LOG_D("get_file_data_for_obj: Attempting to read file: %s", filename);
+
+    // Support both asset:// protocol (embedded) and disk paths
+    if (str_startswith(filename, "asset://")) {
+        LOG_D("get_file_data_for_obj: Loading from embedded assets");
+        *data = (char*)assets_get(filename, &size);
+        if (*data == NULL) {
+            LOG_E("get_file_data_for_obj: Asset not found: %s", filename);
+            *len = 0;
+        } else {
+            LOG_D("get_file_data_for_obj: Successfully loaded %d bytes from asset: %s", size, filename);
+            LOG_D("  First 50 chars: %.50s", *data);
+            LOG_D("  Last 50 chars: %s", *data + (size > 50 ? size - 50 : 0));
+            LOG_D("  Is null-terminated: %s", (*data)[size-1] == '\0' ? "YES" : "NO");
+            *len = size;
+        }
+    } else {
+        LOG_D("get_file_data_for_obj: Loading from disk");
+        *data = read_file(filename, &size);
+        if (*data == NULL) {
+            LOG_E("get_file_data_for_obj: Failed to read file from disk: %s", filename);
+            *len = 0;
+        } else {
+            LOG_D("get_file_data_for_obj: Successfully read %d bytes from disk: %s", size, filename);
+            *len = size;
+        }
+    }
 }
 
 /*
@@ -494,6 +523,9 @@ model3d_t *model3d_from_obj(const char *path)
     int i, j, idx;
     float v0[3], v1[3], v2[3], normal[3];
     int vertex_index = 0;
+    bool success = false;
+
+    LOG_I("model3d_from_obj: Attempting to load OBJ file: %s", path);
 
     // Parse OBJ file with triangulation
     flags = TINYOBJ_FLAG_TRIANGULATE;
@@ -502,27 +534,54 @@ model3d_t *model3d_from_obj(const char *path)
                             NULL, flags);
 
     if (err != TINYOBJ_SUCCESS) {
-        LOG_E("Failed to load OBJ file: %s", path);
+        LOG_E("Failed to load OBJ file: %s (error code: %d)", path, err);
+        LOG_E("  num_shapes: %zu, num_faces: %d, num_vertices: %d",
+              num_shapes, attrib.num_faces, attrib.num_vertices);
         goto cleanup;
     }
+
+    LOG_D("tinyobj_parse_obj succeeded: shapes=%zu, materials=%zu, faces=%d, vertices=%d",
+          num_shapes, num_materials, attrib.num_faces, attrib.num_vertices);
+    LOG_D("  normals=%d, texcoords=%d", attrib.num_normals, attrib.num_texcoords);
 
     if (attrib.num_faces == 0) {
         LOG_W("OBJ file has no faces: %s", path);
         goto cleanup;
     }
 
-    // Create model (3 vertices per triangle)
+    if (attrib.num_vertices == 0) {
+        LOG_E("OBJ file has no vertices: %s", path);
+        goto cleanup;
+    }
+
+    // Note: attrib.num_faces is the total number of face indices (3 per triangle)
+    // So the actual number of triangles is attrib.num_faces / 3
+    int num_triangles = attrib.num_faces / 3;
+
+    LOG_D("Creating model with %d triangles (%d face indices, %d vertices)",
+          num_triangles, attrib.num_faces, num_triangles * 3);
     model = calloc(1, sizeof(*model));
-    model->nb_vertices = attrib.num_faces * 3;
+    model->nb_vertices = num_triangles * 3;
     model->vertices = calloc(model->nb_vertices, sizeof(*model->vertices));
     model->solid = true;
     model->cull = true;
 
     // Convert indexed triangles to vertex array
-    for (i = 0; i < attrib.num_faces; i++) {
+    for (i = 0; i < num_triangles; i++) {
         // Get the 3 vertices of this triangle
         for (j = 0; j < 3; j++) {
             idx = attrib.faces[i * 3 + j].v_idx;
+
+            // Bounds checking for vertex index
+            if (idx < 0 || idx >= attrib.num_vertices) {
+                LOG_E("Invalid vertex index %d (triangle %d, vertex %d). Total vertices: %d",
+                      idx, i, j, attrib.num_vertices);
+                LOG_E("  Face indices for this triangle: [%d, %d, %d]",
+                      attrib.faces[i * 3 + 0].v_idx,
+                      attrib.faces[i * 3 + 1].v_idx,
+                      attrib.faces[i * 3 + 2].v_idx);
+                goto cleanup;
+            }
 
             // Position
             model->vertices[vertex_index].pos[0] = attrib.vertices[idx * 3 + 0];
@@ -532,16 +591,28 @@ model3d_t *model3d_from_obj(const char *path)
             // Check if normals are provided
             if (attrib.faces[i * 3 + j].vn_idx >= 0) {
                 int nidx = attrib.faces[i * 3 + j].vn_idx;
-                model->vertices[vertex_index].normal[0] = attrib.normals[nidx * 3 + 0];
-                model->vertices[vertex_index].normal[1] = attrib.normals[nidx * 3 + 1];
-                model->vertices[vertex_index].normal[2] = attrib.normals[nidx * 3 + 2];
+                if (nidx >= 0 && nidx < attrib.num_normals) {
+                    model->vertices[vertex_index].normal[0] = attrib.normals[nidx * 3 + 0];
+                    model->vertices[vertex_index].normal[1] = attrib.normals[nidx * 3 + 1];
+                    model->vertices[vertex_index].normal[2] = attrib.normals[nidx * 3 + 2];
+                } else {
+                    LOG_W("Invalid normal index %d (face %d, vertex %d). Total normals: %d",
+                          nidx, i, j, attrib.num_normals);
+                }
             }
 
             // UV coordinates if available
             if (attrib.faces[i * 3 + j].vt_idx >= 0) {
                 int tidx = attrib.faces[i * 3 + j].vt_idx;
-                model->vertices[vertex_index].uv[0] = attrib.texcoords[tidx * 2 + 0];
-                model->vertices[vertex_index].uv[1] = attrib.texcoords[tidx * 2 + 1];
+                if (tidx >= 0 && tidx < attrib.num_texcoords) {
+                    model->vertices[vertex_index].uv[0] = attrib.texcoords[tidx * 2 + 0];
+                    model->vertices[vertex_index].uv[1] = attrib.texcoords[tidx * 2 + 1];
+                } else {
+                    LOG_W("Invalid texcoord index %d (face %d, vertex %d). Total texcoords: %d",
+                          tidx, i, j, attrib.num_texcoords);
+                    model->vertices[vertex_index].uv[0] = 0.5f;
+                    model->vertices[vertex_index].uv[1] = 0.5f;
+                }
             } else {
                 model->vertices[vertex_index].uv[0] = 0.5f;
                 model->vertices[vertex_index].uv[1] = 0.5f;
@@ -573,13 +644,22 @@ model3d_t *model3d_from_obj(const char *path)
     }
 
     model->dirty = true;
-    LOG_I("Loaded OBJ model: %s (%d triangles)", path, attrib.num_faces);
+    success = true;
+    LOG_I("Loaded OBJ model: %s (%d triangles)", path, num_triangles);
 
 cleanup:
     // Free tinyobj data
     tinyobj_attrib_free(&attrib);
     tinyobj_shapes_free(shapes, num_shapes);
     tinyobj_materials_free(materials, num_materials);
+
+    // If loading failed, free the partially constructed model
+    if (!success && model != NULL) {
+        LOG_E("Model loading failed, freeing partial model");
+        if (model->vertices) free(model->vertices);
+        free(model);
+        model = NULL;
+    }
 
     return model;
 }

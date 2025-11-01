@@ -26,6 +26,8 @@
 #include "../ext_src/voxelizer/voxelizer.h"
 #pragma GCC diagnostic pop
 
+// Increase max faces per line to support complex models
+#define TINYOBJ_MAX_FACES_PER_F_LINE 256
 #define TINYOBJ_LOADER_C_IMPLEMENTATION
 #include "../ext_src/tinyobjloader/tinyobj_loader_c.h"
 

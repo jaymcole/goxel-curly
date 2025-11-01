@@ -42,10 +42,11 @@ TYPES = {
     "lua":   { "text": True },
     "js":    { "text": True },
     "mo":    { "text": False },
+    "obj":   { "text": True },  # OBJ is a text format
 }
 GROUPS = ['fonts', 'icons', 'images', 'other', 'palettes', 'progs',
           'shaders', 'sounds', 'themes', 'samples', 'mobile',
-          'scripts', 'locale']
+          'scripts', 'locale', 'models']
 TEMPLATE = '{{.path = "{path}", .size = {size}, .data =\n{data}\n}},'
 File = namedtuple('File', 'path name data size')
 
@@ -82,11 +83,17 @@ def encode_str(data):
     data = data.decode()
     ret = '    "'
     for c in data:
-        if c == '\n':
-            ret += '\\n"\n    "'
+        if c == '\r':
+            # Skip carriage returns (Windows CRLF handling)
             continue
-        if c == '"': c = '\\"'
-        if c == '\\': c = '\\\\'
+        if c == '\n':
+            ret += '\\n"'
+            ret += '\n    "'
+            continue
+        if c == '"':
+            c = '\\"'
+        if c == '\\':
+            c = '\\\\'
         ret += c
     ret += '"'
     return ret
@@ -105,14 +112,16 @@ def encode_bin(data):
 def create_file(f):
     data = open(f, 'rb').read()
     size = len(data)
-    name = f.replace('/', '_').replace('.', '_').replace('-', '_')
+    # Normalize path to use forward slashes (cross-platform)
+    path = f.replace('\\', '/')
+    name = path.replace('/', '_').replace('.', '_').replace('-', '_')
     ext = f.split(".")[-1]
     if TYPES[ext]['text']:
         size += 1 # So that we NULL terminate the string.
         data = encode_str(data)
     else:
         data = encode_bin(data)
-    return File(f, name, data, size)
+    return File(path, name, data, size)
 
 
 for group in GROUPS:

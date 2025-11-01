@@ -22,6 +22,10 @@
 #include <limits.h>
 #include <math.h>
 
+// CUSTOM MODEL SUBSTITUTION: External function from render.c
+// Used to clear render cache when model_ids change
+extern void render_clear_items_cache(void);
+
 #define min(a, b) ({ \
       __typeof__ (a) _a = (a); \
       __typeof__ (b) _b = (b); \
@@ -950,6 +954,14 @@ void volume_set_model_id_at(volume_t *volume, volume_iterator_t *it,
 
     idx = x + y * N + z * N * N;
     tile->data->model_ids[idx] = model_id;
+
+    // Force tile data ID update to invalidate render cache
+    // This ensures cached vertex buffers are regenerated when model_ids change
+    tile->data->id = ++g_uid;
+
+    // Clear the entire render cache to force regeneration for all tiles
+    // This is necessary because tiles far from cursor may have cached cube geometry
+    render_clear_items_cache();
 
     // Update iterator cache if provided
     if (it) {

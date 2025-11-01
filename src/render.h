@@ -120,4 +120,8 @@ void render_get_light_dir(const renderer_t *rend, float out[3]);
 // Attempt to release some memory.
 void render_on_low_memory(renderer_t *rend);
 
+// CUSTOM MODEL SUBSTITUTION: Clear render items cache
+// Called when model_ids change to force vertex buffer regeneration
+void render_clear_items_cache(void);
+
 #endif // RENDER_H

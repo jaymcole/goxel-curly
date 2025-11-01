@@ -377,24 +377,19 @@ void volume_op(volume_t *volume, const painter_t *painter, const float box[4][4]
         if (!c[3] && skip_src_empty) continue;
         volume_get_at(volume, &accessor, vp, value);
         if (!value[3] && skip_dst_empty) continue;
+
+        // CUSTOM MODEL SUBSTITUTION: Track if voxel was opaque before operation
+        bool was_opaque = (value[3] >= 127);
+
         combine(value, c, mode, new_value);
-        if (!vec4_equal(value, new_value))
+        if (!vec4_equal(value, new_value)) {
             volume_set_at(volume, &accessor, vp, new_value);
-    }
 
-    // CUSTOM MODEL SUBSTITUTION: Set model_id on placed voxels
-    if (painter->model_id > 0) {
-        volume_iterator_t iter2;
-        volume_accessor_t accessor2;
-        uint8_t voxel[4];
-
-        accessor2 = volume_get_accessor(volume);
-        iter2 = volume_get_box_iterator(volume, box, VOLUME_ITER_SKIP_EMPTY);
-
-        while (volume_iter(&iter2, vp)) {
-            volume_get_at(volume, &accessor2, vp, voxel);
-            if (voxel[3] >= 127) {
-                volume_set_model_id_at(volume, &accessor2, vp, painter->model_id);
+            // CUSTOM MODEL SUBSTITUTION: Only set model_id on newly created voxels
+            // If voxel transitioned from transparent to opaque, it's newly created
+            bool is_now_opaque = (new_value[3] >= 127);
+            if (!was_opaque && is_now_opaque) {
+                volume_set_model_id_at(volume, &accessor, vp, painter->model_id);
             }
         }
     }
@@ -473,6 +468,19 @@ static void tile_merge(volume_t *volume, const volume_t *other, const int pos[3]
         if (color) color_mul(v2, color, v2);
         combine(v1, v2, mode, v1);
         volume_set_at(tile, &a3, (int[]){x, y, z}, v1);
+
+        // CUSTOM MODEL SUBSTITUTION: Preserve model_ids during merge
+        // If the source voxel (v2) is opaque, use its model_id
+        // Otherwise, preserve the destination's model_id
+        // Always set model_id (including 0) to clear old values when painting cubes
+        uint8_t model_id_src = volume_get_model_id_at(other, &a2, p);
+        uint8_t model_id_dst = volume_get_model_id_at(volume, &a1, p);
+        uint8_t final_model_id = (v2[3] >= 127) ? model_id_src : model_id_dst;
+
+        // Always set, even if 0, to clear previous model assignments
+        if (v1[3] >= 127) {  // Only for opaque voxels in result
+            volume_set_model_id_at(tile, &a3, (int[]){x, y, z}, final_model_id);
+        }
     }
     cache_add(cache, &key, sizeof(key), tile, 1, volume_del);
 

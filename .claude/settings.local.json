@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(cmake --build:*)",
+      "Bash(mingw32-make:*)",
+      "Bash(make:*)",
+      "Bash(cmake:*)",
+      "Bash(python tools/create_assets.py:*)",
+      "Bash(python3:*)",
+      "Bash(python:*)",
+      "Bash(awk:*)",
+      "Bash(find:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

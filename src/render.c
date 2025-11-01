@@ -594,8 +594,12 @@ static void render_custom_models(renderer_t *rend, volume_t *volume,
     (void)material; // Parameter reserved for future use
 
     // Iterate through all voxels
+    // Use VOLUME_ITER_INCLUDES_NEIGHBORS to ensure tiles exist in the hash table
+    // Without this flag, only tiles already in the hash are visited, causing models
+    // to only appear near the cursor (where tool operations create tiles)
     iter = volume_get_accessor(volume);
-    volume_iterator_t iter2 = volume_get_iterator(volume, VOLUME_ITER_SKIP_EMPTY);
+    volume_iterator_t iter2 = volume_get_iterator(volume,
+        VOLUME_ITER_VOXELS | VOLUME_ITER_INCLUDES_NEIGHBORS);
 
     while (volume_iter(&iter2, pos)) {
         // Check if voxel exists and get its model_id
@@ -1168,3 +1172,19 @@ void render_on_low_memory(renderer_t *rend)
 {
     cache_clear(g_items_cache);
 }
+
+// CUSTOM MODEL SUBSTITUTION START
+/*
+ * Function: render_clear_items_cache
+ * Clear the render items cache to force vertex buffer regeneration.
+ *
+ * This is called when model_ids are changed to ensure tiles with custom
+ * models have their cached cube geometry regenerated.
+ */
+void render_clear_items_cache(void)
+{
+    if (g_items_cache) {
+        cache_clear(g_items_cache);
+    }
+}
+// CUSTOM MODEL SUBSTITUTION END

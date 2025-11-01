@@ -273,7 +273,24 @@ int volume_generate_vertices(const volume_t *volume, const int block_pos[3],
 
         neighboors_mask = get_neighboors(data, pos, neighboors);
         for (f = 0; f < 6; f++) {
-            if (!block_is_face_visible(neighboors_mask, f)) continue;
+            bool face_visible = block_is_face_visible(neighboors_mask, f);
+
+            // CUSTOM MODEL SUBSTITUTION: Don't cull faces adjacent to custom models
+            // Custom models don't fill the entire voxel space, so adjacent cube faces
+            // should still be rendered even though the neighbor voxel is opaque
+            if (!face_visible) {
+                int neighbor_pos[3] = {
+                    world_pos[0] + FACES_NORMALS[f][0],
+                    world_pos[1] + FACES_NORMALS[f][1],
+                    world_pos[2] + FACES_NORMALS[f][2]
+                };
+                uint8_t neighbor_model_id = volume_get_model_id_at(volume, &iter, neighbor_pos);
+                if (neighbor_model_id > 0) {
+                    face_visible = true;  // Override culling - render face anyway
+                }
+            }
+
+            if (!face_visible) continue;
             block_get_normal(f, normal, tangent);
             block_get_gradient(neighboors_mask, neighboors, f, gradient);
             shadow_mask = block_get_shadow_mask(neighboors_mask, f);

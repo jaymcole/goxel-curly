@@ -315,7 +315,98 @@ if (!face_visible) continue;
 
 ---
 
-## 7. Cache System
+## 7. Mouse Picking for Custom Models
+
+### The Problem
+Mouse picking/raycasting determines which voxel the cursor is pointing at. The picking system relies on detecting solid geometry. Custom models render as separate 3D models, not as cube voxels, so the original picking system wouldn't detect them - clicks would pass right through.
+
+### The Solution: Low-Opacity Picking Cubes
+Instead of modifying the complex picking system, we render a nearly-invisible cube at each custom model voxel position. This cube is:
+- Nearly transparent (alpha = 5)
+- Detected by mouse picking
+- Invisible to users (custom model renders on top)
+
+### Implementation
+
+**Location**: `src/volume_to_vertices.c`
+
+#### Step 1: Detect Custom Model Voxels (lines 267-277)
+```c
+// Check if this voxel has a custom model
+int world_pos[3] = {block_pos[0] + x, block_pos[1] + y, block_pos[2] + z};
+volume_iterator_t iter = volume_get_accessor(volume);
+uint8_t model_id = volume_get_model_id_at(volume, &iter, world_pos);
+bool is_custom_model = (model_id > 0);
+
+if (is_custom_model) {
+    // Render nearly-invisible cube for mouse picking
+    v[3] = 5;  // Low opacity - pickable but nearly invisible
+}
+```
+
+Instead of skipping cube generation (as we did initially), we set the voxel's alpha to 5 and proceed with cube generation.
+
+#### Step 2: Preserve Low Alpha (lines 313-318)
+```c
+memcpy(out[nb * 4 + i].color, v, sizeof(v));
+
+// CUSTOM MODEL SUBSTITUTION: Preserve low alpha for picking cubes
+if (is_custom_model) {
+    out[nb * 4 + i].color[3] = 5;  // Keep low opacity for picking
+} else {
+    out[nb * 4 + i].color[3] = out[nb * 4 + i].color[3] ? 255 : 0;
+}
+```
+
+The normal cube rendering quantizes alpha to either 255 or 0. For custom models, we preserve the low alpha value (5) instead.
+
+### Depth Testing Fix with Polygon Offset
+
+**Problem Encountered**: Picking cubes (alpha=5) rendered first and wrote to depth buffer, causing custom models to fail depth testing. Only visible when camera was inside the cube.
+
+**Attempted Solution 1 - Rendering Order Change**: Rendering custom models before cubes caused GL_INVALID_OPERATION errors due to OpenGL state conflicts (calling render_custom_models() in the middle of cube shader setup).
+
+**Final Solution**: Use polygon offset in `src/render.c:746-754`
+
+```c
+// Render cubes first (including picking cubes)
+// ... cube rendering ...
+
+// Render custom models with polygon offset
+GL(glEnable(GL_POLYGON_OFFSET_FILL));
+GL(glPolygonOffset(-1.0f, -1.0f));  // Slight offset toward camera
+render_custom_models(rend, volume, material);
+GL(glDisable(GL_POLYGON_OFFSET_FILL));
+```
+
+**Why this works**:
+1. Cubes (including picking cubes) render normally with depth writes
+2. Custom models render after with polygon offset enabled
+3. Polygon offset shifts depth values slightly toward camera
+4. Custom models pass depth test even when picking cubes wrote depth at same position
+5. Both geometries co-exist without depth conflicts
+6. No OpenGL state management issues
+
+### Result
+- **Two layers render at same position**:
+  1. Low-opacity cube (renders first) - writes depth, nearly invisible but pickable
+  2. Custom model (renders second with offset) - passes depth test due to polygon offset, fully visible
+- **Mouse picking works**: Detects the low-opacity cube geometry
+- **Visual appearance correct**: Custom model fully visible, picking cube nearly invisible
+- **No picking system changes needed**: Leverages existing geometry-based picking
+- **Proper depth occlusion**: Both layers participate in depth testing with other voxels
+- **Clean OpenGL state**: No shader/attribute conflicts
+
+### Trade-offs
+- **Pro**: Simple, elegant solution using existing systems
+- **Pro**: No complex picking system modifications
+- **Pro**: Works with all existing mouse/tool interactions
+- **Con**: Adds minimal extra geometry (one cube per custom model voxel)
+- **Con**: Very slight transparency where cube shows through (negligible at alpha=5)
+
+---
+
+## 8. Cache System
 
 ### Render Items Cache
 **Location**: `src/render.c`
@@ -351,16 +442,18 @@ void render_clear_items_cache(void)
 
 ---
 
-## 8. All Places Where Rendering/Tiles Are Affected
+## 9. All Places Where Rendering/Tiles Are Affected
 
 ### Critical Code Locations Summary
 
 | File | Lines | Purpose | Affects Rendering? |
 |------|-------|---------|-------------------|
 | **src/render.c** | 596-632 | render_custom_models() - Main custom model rendering | ✅ YES - Core rendering |
+| **src/render.c** | 746-754 | Polygon offset for custom models - depth testing fix | ✅ YES - Depth handling |
 | **src/render.c** | 1180-1185 | render_clear_items_cache() - Cache invalidation | ✅ YES - Forces re-render |
-| **src/volume_to_vertices.c** | 267-272 | Skip cube generation for custom models | ✅ YES - Prevents double render |
-| **src/volume_to_vertices.c** | 276-293 | Face culling override for custom model neighbors | ✅ YES - Renders adjacent faces |
+| **src/volume_to_vertices.c** | 267-277 | Render low-opacity cube for custom model picking | ✅ YES - Mouse picking |
+| **src/volume_to_vertices.c** | 313-318 | Preserve low alpha for custom model cubes | ✅ YES - Mouse picking |
+| **src/volume_to_vertices.c** | 281-298 | Face culling override for custom model neighbors | ✅ YES - Renders adjacent faces |
 | **src/volume.c** | 962-964 | Cache clear on model_id change | ✅ YES - Triggers re-render |
 | **src/volume_utils.c** | 378-394 | volume_op() - Set model_id on new voxels | ✅ YES - Affects what renders |
 | **src/volume_utils.c** | 478-489 | tile_merge() - Preserve model_ids | ✅ YES - Affects stored data |
@@ -368,11 +461,12 @@ void render_clear_items_cache(void)
 | **src/goxel.c** | 1302-1306 | Replace layer with tool_volume for preview | ✅ YES - Preview rendering |
 | **src/goxel.c** | 1157-1159 | Main render loop with layers | ✅ YES - Core rendering |
 | **src/volume.c** | 25-27 | External declaration for cache clear | ⚠️ Indirect |
-| **src/model_manager.c** | - | Model loading and registration | ⚠️ Indirect - provides models |
+| **src/model_manager.c** | 78-86 | Model loading and registration | ⚠️ Indirect - provides models |
+| **src/model_manager.c** | 80 | Disable face culling for custom models | ✅ YES - Visibility fix |
 
 ---
 
-## 9. Key Bugs We Fixed
+## 10. Key Bugs We Fixed
 
 ### Bug 1: Models Only Render Near Cursor
 - **Cause**: Iterator didn't have `VOLUME_ITER_INCLUDES_NEIGHBORS` flag
@@ -400,9 +494,29 @@ void render_clear_items_cache(void)
 - **Symptom**: Visual gaps - could see through world when cube next to lightbulb
 - **Fix**: Override culling decision when neighbor has model_id > 0, render face anyway
 
+### Bug 6: Mouse Clicks Pass Through Custom Models
+- **Cause**: Custom models render as separate geometry, not detected by picking system
+- **Location**: `src/volume_to_vertices.c:267-277, 313-318`
+- **Symptom**: Clicks go through lightbulbs as if they weren't there
+- **Fix**: Render low-opacity cube (alpha=5) at custom model positions for picking
+
+### Bug 7: Custom Models Hidden by Picking Cubes (Depth Test Failure)
+- **Cause**: Picking cubes rendered first and wrote to depth buffer, blocking custom models behind them
+- **Location**: `src/render.c:746-754`
+- **Symptom**: Only see transparent cube, custom model appears only when camera inside cube
+- **Fix**: Use glPolygonOffset() to render custom models with slight depth bias toward camera
+- **Note**: Initial attempt to change rendering order caused GL_INVALID_OPERATION due to state conflicts
+
+### Bug 8: Custom Models Only Visible from Inside (Face Culling)
+- **Cause**: OBJ models have face culling enabled by default (model->cull = true)
+- **Location**: `src/model_manager.c:80`
+- **Symptom**: Lightbulb invisible from outside, only visible when camera inside the voxel
+- **Reason**: Lightbulb OBJ file has reversed face winding order, back faces culled when viewing from outside
+- **Fix**: Set model->cull = false after loading to disable face culling for custom models
+
 ---
 
-## 10. Best Practices Learned
+## 11. Best Practices Learned
 
 ### When Adding New Features That Affect Rendering
 
@@ -411,6 +525,7 @@ void render_clear_items_cache(void)
 3. **Preserve Existing Data**: Don't overwrite stored voxel properties during preview
 4. **Handle model_id=0**: Remember that 0 is a valid model_id (cubes), not "unset"
 5. **Tile Materialization**: Operations only materialize tiles they touch - plan accordingly
+6. **Rendering Order Matters**: Consider depth testing when rendering multiple geometries at same position
 
 ### Testing Checklist for Rendering Changes
 
@@ -422,10 +537,13 @@ void render_clear_items_cache(void)
 - [ ] Cache invalidates when model data changes
 - [ ] No double-rendering (both cube and custom model)
 - [ ] Cube faces adjacent to custom models are rendered (no visual gaps)
+- [ ] Mouse clicks detect custom model voxels correctly
+- [ ] Custom models visible from all camera angles (depth testing works correctly)
+- [ ] Custom models visible from outside voxels (face culling disabled)
 
 ---
 
-## 11. Architecture Insights
+## 12. Architecture Insights
 
 ### Why Goxel Uses This Design
 
@@ -443,7 +561,7 @@ void render_clear_items_cache(void)
 
 ---
 
-## 12. Future Considerations
+## 13. Future Considerations
 
 ### If Adding More Model Types
 
@@ -468,7 +586,7 @@ void render_clear_items_cache(void)
 
 ---
 
-## 13. Quick Reference: "Where Does This Happen?"
+## 14. Quick Reference: "Where Does This Happen?"
 
 **Q: Where are voxels stored?**
 A: `src/volume.c` - hash table of 16³ tiles
@@ -482,11 +600,11 @@ A: `src/volume_utils.c:378-394` (volume_op, only on new voxels)
 **Q: Where are model_ids retrieved for rendering?**
 A: `src/render.c:604-630` (render_custom_models)
 
-**Q: Where is cube geometry skipped for custom models?**
-A: `src/volume_to_vertices.c:267-272`
+**Q: Where are low-opacity picking cubes rendered for custom models?**
+A: `src/volume_to_vertices.c:267-277` (sets alpha=5) and `313-318` (preserves low alpha)
 
 **Q: Where is face culling overridden for custom models?**
-A: `src/volume_to_vertices.c:276-293` (checks neighbor model_id)
+A: `src/volume_to_vertices.c:281-298` (checks neighbor model_id)
 
 **Q: Where does tool preview replace the layer?**
 A: `src/goxel.c:1302-1306` (goxel_get_render_layers)
@@ -502,6 +620,18 @@ A: `volume_op()` setting model_id on existing voxels instead of only new ones
 
 **Q: Why are cube faces adjacent to custom models rendered?**
 A: Custom models don't fill entire voxel space - without rendering adjacent faces, you'd see through the world
+
+**Q: How do mouse clicks detect custom model voxels?**
+A: Low-opacity cubes (alpha=5) render at custom model positions - nearly invisible but pickable by mouse system
+
+**Q: What's the rendering order for custom models vs cubes?**
+A: Cubes render first, then custom models with polygon offset (`src/render.c:746-754`). Offset prevents depth conflicts.
+
+**Q: Why were custom models only visible when camera was inside?**
+A: Two issues: (1) Picking cubes wrote depth buffer - fixed with glPolygonOffset(). (2) Face culling removed back faces - fixed by setting model->cull = false.
+
+**Q: Should I enable face culling for custom models?**
+A: No. OBJ files may have inconsistent face winding. Disable culling (model->cull = false) to ensure visibility from all angles.
 
 ---
 

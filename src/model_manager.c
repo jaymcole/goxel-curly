@@ -77,6 +77,7 @@ void model_manager_load(void)
     LOG_I("Attempting to load model_id 1: asset://data/models/Lightbulb.obj");
     model = model3d_from_obj("asset://data/models/Lightbulb.obj");
     if (model) {
+        model->cull = false;  // Disable face culling for visibility from all angles
         model_manager_register(1, model);
         g_model_manager.names[1] = "Lightbulb";
         LOG_I("Successfully registered Lightbulb.obj as model_id 1");

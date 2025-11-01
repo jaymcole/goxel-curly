@@ -625,8 +625,9 @@ static void render_custom_models(renderer_t *rend, volume_t *volume,
         get_light_dir(rend, light);
 
         // Render the custom model at this voxel position
+        // Use EFFECT_NO_DEPTH_TEST to ensure model renders regardless of picking cube depth
         model3d_render(model, model_mat, rend->view_mat, rend->proj_mat,
-                       voxel, NULL, light, NULL, 0);
+                       voxel, NULL, light, NULL, EFFECT_NO_DEPTH_TEST);
     }
 }
 // CUSTOM MODEL SUBSTITUTION END
@@ -743,13 +744,15 @@ static void render_volume_(renderer_t *rend, volume_t *volume,
     for (attr = 0; attr < ARRAY_SIZE(ATTRIBUTES); attr++)
         GL(glDisableVertexAttribArray(attr));
 
-    // CUSTOM MODEL SUBSTITUTION START
-    // After rendering all normal cubes, render custom models for voxels with model_id > 0
+    // CUSTOM MODEL SUBSTITUTION: Render custom models after cubes
+    // Use polygon offset to ensure custom models render slightly in front of picking cubes
     if (!(effects & (EFFECT_RENDER_POS | EFFECT_SHADOW_MAP | EFFECT_GRID_ONLY |
                      EFFECT_EDGES | EFFECT_SEE_BACK))) {
+        GL(glEnable(GL_POLYGON_OFFSET_FILL));
+        GL(glPolygonOffset(-1.0f, -1.0f));  // Slight offset toward camera
         render_custom_models(rend, volume, material);
+        GL(glDisable(GL_POLYGON_OFFSET_FILL));
     }
-    // CUSTOM MODEL SUBSTITUTION END
 
     if (effects & EFFECT_SEE_BACK) {
         effects &= ~EFFECT_SEE_BACK;

@@ -264,12 +264,17 @@ int volume_generate_vertices(const volume_t *volume, const int block_pos[3],
         data_get_at(data, x, y, z, v);
         if (v[3] < 127) continue;    // Non visible
 
-        // CUSTOM MODEL SUBSTITUTION: Skip voxels with custom models
-        // They will be rendered separately by render_custom_models()
+        // CUSTOM MODEL SUBSTITUTION: Render low-opacity cube for mouse picking
+        // Custom models will be rendered on top, but we need the cube for picking
         int world_pos[3] = {block_pos[0] + x, block_pos[1] + y, block_pos[2] + z};
         volume_iterator_t iter = volume_get_accessor(volume);
         uint8_t model_id = volume_get_model_id_at(volume, &iter, world_pos);
-        if (model_id > 0) continue;  // Skip - will be rendered as custom model
+        bool is_custom_model = (model_id > 0);
+
+        if (is_custom_model) {
+            // Render nearly-invisible cube for mouse picking
+            v[3] = 5;  // Low opacity - pickable but nearly invisible
+        }
 
         neighboors_mask = get_neighboors(data, pos, neighboors);
         for (f = 0; f < 6; f++) {
@@ -304,7 +309,12 @@ int volume_generate_vertices(const volume_t *volume, const int block_pos[3],
                 memcpy(out[nb * 4 + i].tangent, tangent, sizeof(tangent));
                 memcpy(out[nb * 4 + i].gradient, gradient, sizeof(gradient));
                 memcpy(out[nb * 4 + i].color, v, sizeof(v));
-                out[nb * 4 + i].color[3] = out[nb * 4 + i].color[3] ? 255 : 0;
+                // CUSTOM MODEL SUBSTITUTION: Preserve low alpha for picking cubes
+                if (is_custom_model) {
+                    out[nb * 4 + i].color[3] = 5;  // Keep low opacity for picking
+                } else {
+                    out[nb * 4 + i].color[3] = out[nb * 4 + i].color[3] ? 255 : 0;
+                }
                 out[nb * 4 + i].occlusion_uv[0] =
                     shadow_mask % 16 * ts + VERTICE_UV[i][0] * (ts - 1);
                 out[nb * 4 + i].occlusion_uv[1] =

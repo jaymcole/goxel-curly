@@ -574,6 +574,50 @@ static void compute_shadow_map_box(
 
 // CUSTOM MODEL SUBSTITUTION START
 /*
+ * Render transparent picking cubes for voxels with model_id > 0.
+ * These cubes are nearly invisible (alpha=5) but provide geometry for mouse picking.
+ * Depth writes are disabled so they don't block the custom models.
+ */
+static void render_picking_cubes(renderer_t *rend, volume_t *volume,
+                                   const material_t *material)
+{
+    volume_iterator_t iter;
+    int pos[3];
+    uint8_t voxel[4];
+    uint8_t model_id;
+    float box_mat[4][4];
+    uint8_t picking_color[4] = {255, 255, 255, 5};  // Nearly transparent white
+
+    (void)material; // Not used
+
+    // Disable depth writes for transparent picking cubes
+    GL(glDepthMask(GL_FALSE));
+
+    iter = volume_get_accessor(volume);
+    volume_iterator_t iter2 = volume_get_iterator(volume,
+        VOLUME_ITER_VOXELS | VOLUME_ITER_INCLUDES_NEIGHBORS);
+
+    while (volume_iter(&iter2, pos)) {
+        volume_get_at(volume, &iter, pos, voxel);
+        if (voxel[3] < 127) continue;
+
+        model_id = volume_get_model_id_at(volume, &iter, pos);
+        if (model_id == 0) continue;  // Only render for custom models
+
+        // Build matrix for unit cube at voxel position
+        mat4_set_identity(box_mat);
+        mat4_itranslate(box_mat, pos[0], pos[1], pos[2]);
+        mat4_iscale(box_mat, 1.0f, 1.0f, 1.0f);
+
+        // Render transparent box for picking
+        render_box(rend, box_mat, picking_color, 0);
+    }
+
+    // Re-enable depth writes
+    GL(glDepthMask(GL_TRUE));
+}
+
+/*
  * Render custom 3D models for voxels that have model_id > 0.
  * This function iterates through all voxels in the volume and renders
  * a custom model (from model_manager) at each voxel position where
@@ -625,9 +669,9 @@ static void render_custom_models(renderer_t *rend, volume_t *volume,
         get_light_dir(rend, light);
 
         // Render the custom model at this voxel position
-        // Use EFFECT_NO_DEPTH_TEST to ensure model renders regardless of picking cube depth
+        // Depth testing enabled - picking cubes don't write depth, so models render correctly
         model3d_render(model, model_mat, rend->view_mat, rend->proj_mat,
-                       voxel, NULL, light, NULL, EFFECT_NO_DEPTH_TEST);
+                       voxel, NULL, light, NULL, 0);
     }
 }
 // CUSTOM MODEL SUBSTITUTION END
@@ -734,6 +778,7 @@ static void render_volume_(renderer_t *rend, volume_t *volume,
 
     GL(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_index_buffer));
 
+    // PASS 1: Render opaque cubes (depth writes enabled)
     tile_id = 1;
     iter = volume_get_iterator(volume,
             VOLUME_ITER_TILES | VOLUME_ITER_INCLUDES_NEIGHBORS);
@@ -744,14 +789,16 @@ static void render_volume_(renderer_t *rend, volume_t *volume,
     for (attr = 0; attr < ARRAY_SIZE(ATTRIBUTES); attr++)
         GL(glDisableVertexAttribArray(attr));
 
-    // CUSTOM MODEL SUBSTITUTION: Render custom models after cubes
-    // Use polygon offset to ensure custom models render slightly in front of picking cubes
+    // PASS 2: Render custom 3D models (depth testing enabled)
     if (!(effects & (EFFECT_RENDER_POS | EFFECT_SHADOW_MAP | EFFECT_GRID_ONLY |
                      EFFECT_EDGES | EFFECT_SEE_BACK))) {
-        GL(glEnable(GL_POLYGON_OFFSET_FILL));
-        GL(glPolygonOffset(-1.0f, -1.0f));  // Slight offset toward camera
         render_custom_models(rend, volume, material);
-        GL(glDisable(GL_POLYGON_OFFSET_FILL));
+    }
+
+    // PASS 3: Render transparent picking cubes (depth writes disabled)
+    if (!(effects & (EFFECT_RENDER_POS | EFFECT_SHADOW_MAP | EFFECT_GRID_ONLY |
+                     EFFECT_EDGES | EFFECT_SEE_BACK))) {
+        render_picking_cubes(rend, volume, material);
     }
 
     if (effects & EFFECT_SEE_BACK) {

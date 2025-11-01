@@ -360,42 +360,62 @@ if (is_custom_model) {
 
 The normal cube rendering quantizes alpha to either 255 or 0. For custom models, we preserve the low alpha value (5) instead.
 
-### Depth Testing Fix with Polygon Offset
+### Final Solution: Three-Pass Rendering System
 
-**Problem Encountered**: Picking cubes (alpha=5) rendered first and wrote to depth buffer, causing custom models to fail depth testing. Only visible when camera was inside the cube.
+**Problem Encountered**: Picking cubes (alpha=5) rendered first and wrote to depth buffer, causing custom models to fail depth testing. Disabling depth writes for entire tiles broke depth ordering of opaque cubes.
 
-**Attempted Solution 1 - Rendering Order Change**: Rendering custom models before cubes caused GL_INVALID_OPERATION errors due to OpenGL state conflicts (calling render_custom_models() in the middle of cube shader setup).
+**Root Insight**: Transparent geometry should NOT write to the depth buffer (standard graphics practice). Need clean separation of opaque, model, and transparent passes.
 
-**Final Solution**: Use polygon offset in `src/render.c:746-754`
+**Attempted Solutions**:
+1. Rendering order change - caused GL_INVALID_OPERATION
+2. Polygon offset - didn't solve the issue
+3. EFFECT_NO_DEPTH_TEST - made models render through walls (incorrect)
+4. Conditional depth writes per tile - broke depth ordering of opaque cubes in same tile
+
+**Final Solution**: Three separate rendering passes
+
+**Implementation**: `src/render.c:737-758` and `src/render.c:581-618`
 
 ```c
-// Render cubes first (including picking cubes)
-// ... cube rendering ...
+// PASS 1: Render opaque cubes only (depth writes ON)
+// Custom model voxels skipped in volume_to_vertices.c:272
+while (volume_iter(&iter, tile_pos)) {
+    render_tile_(...);  // Only renders regular cubes
+}
 
-// Render custom models with polygon offset
-GL(glEnable(GL_POLYGON_OFFSET_FILL));
-GL(glPolygonOffset(-1.0f, -1.0f));  // Slight offset toward camera
+// PASS 2: Render custom 3D models (depth testing ON, depth writes ON)
 render_custom_models(rend, volume, material);
-GL(glDisable(GL_POLYGON_OFFSET_FILL));
+// - Iterates voxels with model_id > 0
+// - Renders 3D models at those positions
+// - Full depth testing against Pass 1 geometry
+
+// PASS 3: Render transparent picking cubes (depth testing ON, depth writes OFF)
+render_picking_cubes(rend, volume, material);
+// - Iterates voxels with model_id > 0
+// - Renders transparent boxes (alpha=5)
+// - glDepthMask(GL_FALSE) - doesn't block anything
+// - Provides geometry for mouse picking
 ```
 
 **Why this works**:
-1. Cubes (including picking cubes) render normally with depth writes
-2. Custom models render after with polygon offset enabled
-3. Polygon offset shifts depth values slightly toward camera
-4. Custom models pass depth test even when picking cubes wrote depth at same position
-5. Both geometries co-exist without depth conflicts
-6. No OpenGL state management issues
+1. **Clean separation**: Each pass has a specific role
+2. **Standard practice**: Opaque → models → transparent rendering order
+3. **Opaque cubes** write depth, establish scene geometry
+4. **Custom models** depth test against opaque geometry, render correctly
+5. **Picking cubes** depth test (don't render through walls) but don't write depth (don't block models)
+6. **No conflicts**: Each pass operates independently with correct depth settings
 
 ### Result
-- **Two layers render at same position**:
-  1. Low-opacity cube (renders first) - writes depth, nearly invisible but pickable
-  2. Custom model (renders second with offset) - passes depth test due to polygon offset, fully visible
-- **Mouse picking works**: Detects the low-opacity cube geometry
-- **Visual appearance correct**: Custom model fully visible, picking cube nearly invisible
+- **Three rendering passes at each custom model position**:
+  1. Pass 1: Opaque cubes (skips custom model voxels) - establish depth
+  2. Pass 2: Custom 3D model - depth tested, fully visible
+  3. Pass 3: Transparent picking cube (alpha=5) - NO depth write, pickable
+- **Mouse picking works**: Detects the transparent cube geometry from Pass 3
+- **Visual appearance correct**: Custom models fully visible, picking cubes nearly invisible
 - **No picking system changes needed**: Leverages existing geometry-based picking
-- **Proper depth occlusion**: Both layers participate in depth testing with other voxels
-- **Clean OpenGL state**: No shader/attribute conflicts
+- **Proper depth occlusion**: Custom models occluded by opaque cubes only
+- **Standard graphics practice**: Opaque → models → transparent rendering order
+- **No depth conflicts**: Clean separation prevents interference between passes
 
 ### Trade-offs
 - **Pro**: Simple, elegant solution using existing systems
@@ -448,11 +468,11 @@ void render_clear_items_cache(void)
 
 | File | Lines | Purpose | Affects Rendering? |
 |------|-------|---------|-------------------|
-| **src/render.c** | 596-632 | render_custom_models() - Main custom model rendering | ✅ YES - Core rendering |
-| **src/render.c** | 746-754 | Polygon offset for custom models - depth testing fix | ✅ YES - Depth handling |
+| **src/render.c** | 626-672 | render_custom_models() - Pass 2: Custom 3D models | ✅ YES - Core rendering |
+| **src/render.c** | 581-618 | render_picking_cubes() - Pass 3: Transparent picking cubes | ✅ YES - Mouse picking |
+| **src/render.c** | 737-758 | Three-pass rendering system coordination | ✅ YES - Rendering order |
 | **src/render.c** | 1180-1185 | render_clear_items_cache() - Cache invalidation | ✅ YES - Forces re-render |
-| **src/volume_to_vertices.c** | 267-277 | Render low-opacity cube for custom model picking | ✅ YES - Mouse picking |
-| **src/volume_to_vertices.c** | 313-318 | Preserve low alpha for custom model cubes | ✅ YES - Mouse picking |
+| **src/volume_to_vertices.c** | 267-272 | Skip custom model voxels in cube generation | ✅ YES - Pass 1 filtering |
 | **src/volume_to_vertices.c** | 281-298 | Face culling override for custom model neighbors | ✅ YES - Renders adjacent faces |
 | **src/volume.c** | 962-964 | Cache clear on model_id change | ✅ YES - Triggers re-render |
 | **src/volume_utils.c** | 378-394 | volume_op() - Set model_id on new voxels | ✅ YES - Affects what renders |
@@ -501,11 +521,12 @@ void render_clear_items_cache(void)
 - **Fix**: Render low-opacity cube (alpha=5) at custom model positions for picking
 
 ### Bug 7: Custom Models Hidden by Picking Cubes (Depth Test Failure)
-- **Cause**: Picking cubes rendered first and wrote to depth buffer, blocking custom models behind them
-- **Location**: `src/render.c:746-754`
+- **Cause**: Picking cubes rendered with opaque cubes and wrote to depth buffer, blocking custom models
+- **Location**: `src/render.c:737-758` and `src/render.c:581-618`
 - **Symptom**: Only see transparent cube, custom model appears only when camera inside cube
-- **Fix**: Use glPolygonOffset() to render custom models with slight depth bias toward camera
-- **Note**: Initial attempt to change rendering order caused GL_INVALID_OPERATION due to state conflicts
+- **Root Issue**: Transparent geometry shouldn't write depth; needed clean separation of rendering passes
+- **Fix**: Three-pass system - opaque cubes → custom models → transparent picking cubes
+- **Note**: Tried polygon offset, EFFECT_NO_DEPTH_TEST, conditional depth writes - all had issues
 
 ### Bug 8: Custom Models Only Visible from Inside (Face Culling)
 - **Cause**: OBJ models have face culling enabled by default (model->cull = true)
@@ -625,10 +646,16 @@ A: Custom models don't fill entire voxel space - without rendering adjacent face
 A: Low-opacity cubes (alpha=5) render at custom model positions - nearly invisible but pickable by mouse system
 
 **Q: What's the rendering order for custom models vs cubes?**
-A: Cubes render first, then custom models with polygon offset (`src/render.c:746-754`). Offset prevents depth conflicts.
+A: Three passes: (1) Opaque cubes only, (2) Custom models, (3) Transparent picking cubes (`src/render.c:737-758`).
 
 **Q: Why were custom models only visible when camera was inside?**
-A: Two issues: (1) Picking cubes wrote depth buffer - fixed with glPolygonOffset(). (2) Face culling removed back faces - fixed by setting model->cull = false.
+A: Two issues: (1) Picking cubes wrote depth buffer - fixed with three-pass system. (2) Face culling removed back faces - fixed by setting model->cull = false.
+
+**Q: Why don't picking cubes write to depth buffer?**
+A: Standard graphics practice - transparent geometry (alpha=5) shouldn't write depth. Rendered in Pass 3 with glDepthMask(GL_FALSE).
+
+**Q: Why three separate passes instead of rendering picking cubes with regular cubes?**
+A: Rendering them together caused depth conflicts. Separate passes ensure: opaque cubes write depth correctly, models depth test against them, picking cubes don't block anything.
 
 **Q: Should I enable face culling for custom models?**
 A: No. OBJ files may have inconsistent face winding. Disable culling (model->cull = false) to ensure visibility from all angles.

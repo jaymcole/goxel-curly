@@ -96,6 +96,147 @@ static camera_t *get_camera(void)
     return goxel.image->cameras;
 }
 
+// CUSTOM MODEL SUBSTITUTION: Ray-triangle intersection using Möller-Trumbore algorithm
+static bool ray_triangle_intersect(
+        const float ray_origin[3], const float ray_dir[3],
+        const float v0[3], const float v1[3], const float v2[3],
+        float *t_out, float *u_out, float *v_out)
+{
+    const float EPSILON = 0.0000001f;
+    float edge1[3], edge2[3], h[3], s[3], q[3];
+    float a, f, u, v;
+
+    // Compute edges
+    vec3_sub(v1, v0, edge1);
+    vec3_sub(v2, v0, edge2);
+
+    // Compute determinant
+    vec3_cross(ray_dir, edge2, h);
+    a = vec3_dot(edge1, h);
+
+    // Ray parallel to triangle
+    if (a > -EPSILON && a < EPSILON)
+        return false;
+
+    f = 1.0f / a;
+    vec3_sub(ray_origin, v0, s);
+    u = f * vec3_dot(s, h);
+
+    // Intersection outside triangle
+    if (u < 0.0f || u > 1.0f)
+        return false;
+
+    vec3_cross(s, edge1, q);
+    v = f * vec3_dot(ray_dir, q);
+
+    // Intersection outside triangle
+    if (v < 0.0f || u + v > 1.0f)
+        return false;
+
+    // Compute t to find intersection point
+    float t = f * vec3_dot(edge2, q);
+
+    // Ray intersection found
+    if (t > EPSILON) {
+        *t_out = t;
+        *u_out = u;
+        *v_out = v;
+        return true;
+    }
+
+    // Intersection behind ray origin
+    return false;
+}
+
+// CUSTOM MODEL SUBSTITUTION: Pick custom 3D models using ray-triangle intersection
+static bool goxel_unproject_on_custom_models(
+        const float viewport[4], const float pos[2], const volume_t *volume,
+        float out[3], float normal[3])
+{
+    camera_t *cam = get_camera();
+    float ray_origin[3], ray_dir[3];
+    volume_iterator_t iter, iter2;
+    int vpos[3];
+    uint8_t voxel[4];
+    uint8_t model_id;
+    float closest_t = FLT_MAX;
+    bool hit = false;
+    float hit_pos[3], hit_normal[3];
+
+    // Get camera ray in world space
+    camera_get_ray(cam, pos, viewport, ray_origin, ray_dir);
+
+    // Iterate all voxels in volume
+    iter = volume_get_accessor(volume);
+    iter2 = volume_get_iterator(volume,
+        VOLUME_ITER_VOXELS | VOLUME_ITER_INCLUDES_NEIGHBORS);
+
+    while (volume_iter(&iter2, vpos)) {
+        // Skip non-opaque voxels
+        volume_get_at(volume, &iter, vpos, voxel);
+        if (voxel[3] < 127) continue;
+
+        // Skip voxels without custom models
+        model_id = volume_get_model_id_at(volume, &iter, vpos);
+        if (model_id == 0) continue;
+
+        // Get the custom model
+        model3d_t *model = model_manager_get(model_id);
+        if (!model || model->nb_vertices == 0) continue;
+
+        // Build model transform matrix (same as rendering)
+        float model_mat[4][4];
+        mat4_set_identity(model_mat);
+        mat4_itranslate(model_mat, vpos[0] + 0.5f, vpos[1] + 0.5f, vpos[2] + 0.5f);
+        mat4_iscale(model_mat, 0.95f, 0.95f, 0.95f);
+
+        // Transform ray to model's local space
+        float inv_model[4][4];
+        mat4_invert(model_mat, inv_model);
+
+        float local_origin[3], local_dir[3];
+        mat4_mul_vec3(inv_model, ray_origin, local_origin);
+        mat4_mul_dir3(inv_model, ray_dir, local_dir);
+        vec3_normalize(local_dir, local_dir);
+
+        // Test ray against all triangles in model
+        for (int i = 0; i < model->nb_vertices; i += 3) {
+            float v0[3], v1[3], v2[3];
+            vec3_copy(model->vertices[i + 0].pos, v0);
+            vec3_copy(model->vertices[i + 1].pos, v1);
+            vec3_copy(model->vertices[i + 2].pos, v2);
+
+            float t, u, v;
+            if (ray_triangle_intersect(local_origin, local_dir, v0, v1, v2, &t, &u, &v)) {
+                if (t > 0 && t < closest_t) {
+                    closest_t = t;
+                    hit = true;
+
+                    // Compute hit point in local space
+                    float hit_local[3];
+                    vec3_addk(local_origin, local_dir, t, hit_local);
+
+                    // Transform to world space
+                    mat4_mul_vec3(model_mat, hit_local, hit_pos);
+
+                    // Get triangle normal and transform to world space
+                    vec3_copy(model->vertices[i].normal, hit_normal);
+                    mat4_mul_dir3(model_mat, hit_normal, hit_normal);
+                    vec3_normalize(hit_normal, hit_normal);
+                }
+            }
+        }
+    }
+
+    if (hit) {
+        vec3_copy(hit_pos, out);
+        vec3_copy(hit_normal, normal);
+        return true;
+    }
+
+    return false;
+}
+
 // XXX: lot of cleanup to do here.
 static bool goxel_unproject_on_plane(
         const float viewport[4], const float pos[2], const float plane[4][4],
@@ -303,8 +444,14 @@ int goxel_unproject(const float viewport[4],
     for (i = 0; i < 10; i++) {
         if (!(snap_mask & (1 << i))) continue;
         if ((1 << i) == SNAP_VOLUME) {
-            r = goxel_unproject_on_volume(viewport, pos,
+            // CUSTOM MODEL SUBSTITUTION: Try custom model picking first
+            r = goxel_unproject_on_custom_models(viewport, pos,
                             goxel_get_layers_volume(goxel.image), p, n);
+            // Fall back to voxel picking if no custom model hit
+            if (!r) {
+                r = goxel_unproject_on_volume(viewport, pos,
+                                goxel_get_layers_volume(goxel.image), p, n);
+            }
         }
         if ((1 << i) == SNAP_PLANE) {
             r = goxel_unproject_on_plane(

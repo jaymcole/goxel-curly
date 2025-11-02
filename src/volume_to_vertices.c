@@ -265,11 +265,11 @@ int volume_generate_vertices(const volume_t *volume, const int block_pos[3],
         if (v[3] < 127) continue;    // Non visible
 
         // CUSTOM MODEL SUBSTITUTION: Skip voxels with custom models entirely
-        // They will be rendered as 3D models, with picking cubes rendered separately
+        // They will be rendered as 3D models; picking uses CPU-based ray-triangle intersection
         int world_pos[3] = {block_pos[0] + x, block_pos[1] + y, block_pos[2] + z};
         volume_iterator_t iter = volume_get_accessor(volume);
         uint8_t model_id = volume_get_model_id_at(volume, &iter, world_pos);
-        if (model_id > 0) continue;  // Skip - will be rendered as custom model + picking cube
+        if (model_id > 0) continue;  // Skip - will be rendered as custom model
 
         neighboors_mask = get_neighboors(data, pos, neighboors);
         for (f = 0; f < 6; f++) {

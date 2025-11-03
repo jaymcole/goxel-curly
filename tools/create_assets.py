@@ -24,6 +24,7 @@
 from collections import namedtuple
 import os
 import sys
+import re
 
 if os.path.basename(os.path.dirname(__file__)) != "tools":
     print("Should be run from goxel root directory")
@@ -109,13 +110,123 @@ def encode_bin(data):
     ret += "}"
     return ret;
 
+def parse_obj_vertices(data):
+    """Parse OBJ file and extract all vertex positions."""
+    vertices = []
+    lines = data.decode().split('\n')
+    for line in lines:
+        line = line.strip()
+        if line.startswith('v '):
+            # Vertex line format: v x y z [w]
+            parts = line.split()
+            if len(parts) >= 4:
+                try:
+                    x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
+                    vertices.append((x, y, z))
+                except ValueError:
+                    continue
+    return vertices
+
+def calculate_obj_bounds(vertices):
+    """Calculate the bounding box of vertices."""
+    if not vertices:
+        return None
+
+    min_x = min(v[0] for v in vertices)
+    max_x = max(v[0] for v in vertices)
+    min_y = min(v[1] for v in vertices)
+    max_y = max(v[1] for v in vertices)
+    min_z = min(v[2] for v in vertices)
+    max_z = max(v[2] for v in vertices)
+
+    return {
+        'min': (min_x, min_y, min_z),
+        'max': (max_x, max_y, max_z),
+        'center': ((min_x + max_x) / 2, (min_y + max_y) / 2, (min_z + max_z) / 2),
+        'size': (max_x - min_x, max_y - min_y, max_z - min_z)
+    }
+
+def scale_obj_to_unit_cube(data):
+    """
+    Scale OBJ model to fit within 1x1x1 unit cube centered at origin.
+    This ensures models render properly within voxel tiles.
+    """
+    vertices = parse_obj_vertices(data)
+    if not vertices:
+        return data  # No vertices to scale
+
+    bounds = calculate_obj_bounds(vertices)
+    if not bounds:
+        return data
+
+    # Calculate the maximum dimension
+    max_dim = max(bounds['size'])
+
+    if max_dim == 0:
+        return data  # Model has no size (point)
+
+    # Scale factor to fit within 1x1x1 cube
+    # We use 1.0 as the target size (the renderer applies 0.95x scaling)
+    scale_factor = 1.0 / max_dim
+
+    # Center offset to move model to origin
+    center = bounds['center']
+
+    # Process the OBJ file line by line and scale vertices
+    lines = data.decode().split('\n')
+    scaled_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith('v '):
+            # Scale vertex position
+            parts = stripped.split()
+            if len(parts) >= 4:
+                try:
+                    x = float(parts[1])
+                    y = float(parts[2])
+                    z = float(parts[3])
+
+                    # Center and scale
+                    x = (x - center[0]) * scale_factor
+                    y = (y - center[1]) * scale_factor
+                    z = (z - center[2]) * scale_factor
+
+                    # Reconstruct vertex line
+                    new_line = f"v {x:.8f} {y:.8f} {z:.8f}"
+                    if len(parts) > 4:  # Include w coordinate if present
+                        new_line += " " + " ".join(parts[4:])
+                    scaled_lines.append(new_line)
+                except ValueError:
+                    scaled_lines.append(line.rstrip())
+            else:
+                scaled_lines.append(line.rstrip())
+        else:
+            # Keep other lines unchanged (normals, faces, etc.)
+            scaled_lines.append(line.rstrip())
+
+    # Convert back to bytes
+    scaled_data = '\n'.join(scaled_lines).encode()
+
+    # Print scaling info
+    print(f"  Scaled by {scale_factor:.4f}x (max dimension: {max_dim:.4f} -> 1.0)")
+    print(f"  Centered from ({center[0]:.4f}, {center[1]:.4f}, {center[2]:.4f}) to origin")
+
+    return scaled_data
+
 def create_file(f):
     data = open(f, 'rb').read()
-    size = len(data)
     # Normalize path to use forward slashes (cross-platform)
     path = f.replace('\\', '/')
     name = path.replace('/', '_').replace('.', '_').replace('-', '_')
     ext = f.split(".")[-1]
+
+    # Apply auto-scaling to OBJ models
+    if ext == 'obj':
+        print(f"Processing model: {path}")
+        data = scale_obj_to_unit_cube(data)
+
+    size = len(data)
     if TYPES[ext]['text']:
         size += 1 # So that we NULL terminate the string.
         data = encode_str(data)
